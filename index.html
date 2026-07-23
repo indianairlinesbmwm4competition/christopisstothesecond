@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
   :root{
     --ink:#14121F;
@@ -387,16 +389,32 @@
   function booksKey(code){ return 'books:' + code; }
   function clearEl(node){ while(node.firstChild) node.removeChild(node.firstChild); }
 
-  async function safeGet(key, shared){
+  const firebaseConfig = {
+    apiKey: "AIzaSyC_1iJDu66t7_m2vr_S3xxnShtq00CqZUY",
+    authDomain: "christopissto.firebaseapp.com",
+    databaseURL: "https://christopissto-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    projectId: "christopissto",
+    storageBucket: "christopissto.firebasestorage.app",
+    messagingSenderId: "13660286285",
+    appId: "1:13660286285:web:4f53f8a992761475751b04"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  function fbKey(key){ return key.replace(/[:.]/g, '_'); }
+
+  async function safeGet(key){
     try{
-      const res = await window.storage.get(key, shared);
-      return res ? res.value : null;
+      const snap = await db.ref(fbKey(key)).get();
+      if(!snap.exists()) return null;
+      const val = snap.val();
+      return (typeof val === 'string') ? val : JSON.stringify(val);
     }catch(e){ return null; }
   }
-  async function safeSet(key, value, shared){
+  async function safeSet(key, value){
     try{
-      const res = await window.storage.set(key, value, shared);
-      return !!res;
+      await db.ref(fbKey(key)).set(value);
+      return true;
     }catch(e){ return false; }
   }
 
@@ -425,14 +443,14 @@
     let code = null;
     for(let i=0;i<8;i++){
       const candidate = genCode();
-      const existing = await safeGet(roomKey(candidate), true);
+      const existing = await safeGet(roomKey(candidate));
       if(!existing){ code = candidate; break; }
     }
-    if(!code){ toast('Could not create a room right now. Try again.', true); return; }
+    if(!code){ toast('Could not create a room right now. Try again.'); return; }
     const room = { code, hostId: state.me.id, status:'lobby', players:[{id:state.me.id, name}], totalRounds:0, currentRound:0, createdAt: Date.now() };
-    const ok1 = await safeSet(roomKey(code), JSON.stringify(room), true);
-    const ok2 = await safeSet(booksKey(code), JSON.stringify([]), true);
-    if(!ok1 || !ok2){ toast('Could not create a room. Try again.', true); return; }
+    const ok1 = await safeSet(roomKey(code), JSON.stringify(room));
+    const ok2 = await safeSet(booksKey(code), JSON.stringify([]));
+    if(!ok1 || !ok2){ toast('Could not create a room. Try again.'); return; }
     state.code = code; state.room = room; state.books = [];
     goScreen('lobby');
     renderLobby();
@@ -441,20 +459,20 @@
 
   async function joinRoom(rawCode, name){
     const code = rawCode.toUpperCase().trim();
-    if(code.length !== 4){ toast('Room codes are 4 characters.', true); return; }
-    const raw = await safeGet(roomKey(code), true);
-    if(!raw){ toast("That code doesn't exist. Double-check it.", true); return; }
+    if(code.length !== 4){ toast('Room codes are 4 characters.'); return; }
+    const raw = await safeGet(roomKey(code));
+    if(!raw){ toast("That code doesn't exist. Double-check it."); return; }
     let room;
-    try{ room = JSON.parse(raw); }catch(e){ toast('That room looks corrupted. Try another code.', true); return; }
-    if(room.status !== 'lobby'){ toast('That game already started without you.', true); return; }
-    if(room.players.length >= MAX_PLAYERS){ toast('That room is full.', true); return; }
+    try{ room = JSON.parse(raw); }catch(e){ toast('That room looks corrupted. Try another code.'); return; }
+    if(room.status !== 'lobby'){ toast('That game already started without you.'); return; }
+    if(room.players.length >= MAX_PLAYERS){ toast('That room is full.'); return; }
     state.me.name = name;
     state.me.id = genId();
     room.players.push({ id: state.me.id, name });
-    const ok = await safeSet(roomKey(code), JSON.stringify(room), true);
-    if(!ok){ toast('Could not join. Try again.', true); return; }
+    const ok = await safeSet(roomKey(code), JSON.stringify(room));
+    if(!ok){ toast('Could not join. Try again.'); return; }
     state.code = code; state.room = room;
-    const rawBooks = await safeGet(booksKey(code), true);
+    const rawBooks = await safeGet(booksKey(code));
     state.books = rawBooks ? JSON.parse(rawBooks) : [];
     goScreen('lobby');
     renderLobby();
@@ -463,13 +481,13 @@
 
   async function startGame(){
     if(!state.room || state.me.id !== state.room.hostId) return;
-    if(state.room.players.length < MIN_PLAYERS){ toast('You need at least ' + MIN_PLAYERS + ' players.', true); return; }
+    if(state.room.players.length < MIN_PLAYERS){ toast('You need at least ' + MIN_PLAYERS + ' players.'); return; }
     const n = state.room.players.length;
     const books = state.room.players.map((p,i)=>({ id:i, entries:[] }));
     const room = Object.assign({}, state.room, { status:'playing', totalRounds:n, currentRound:0 });
-    const ok1 = await safeSet(booksKey(state.code), JSON.stringify(books), true);
-    const ok2 = await safeSet(roomKey(state.code), JSON.stringify(room), true);
-    if(!ok1 || !ok2){ toast('Could not start the game. Try again.', true); return; }
+    const ok1 = await safeSet(booksKey(state.code), JSON.stringify(books));
+    const ok2 = await safeSet(roomKey(state.code), JSON.stringify(room));
+    if(!ok1 || !ok2){ toast('Could not start the game. Try again.'); return; }
     state.room = room; state.books = books;
     syncScreenWithRoom();
   }
@@ -485,7 +503,7 @@
   }
 
   async function submitEntry(content, type){
-    const raw = await safeGet(booksKey(state.code), true);
+    const raw = await safeGet(booksKey(state.code));
     let books = raw ? JSON.parse(raw) : state.books;
     const bookIdx = myBookIndex(state.room.currentRound);
     const book = books[bookIdx];
@@ -495,8 +513,8 @@
       return;
     }
     book.entries.push({ authorId: state.me.id, authorName: state.me.name, type, content });
-    const ok = await safeSet(booksKey(state.code), JSON.stringify(books), true);
-    if(!ok){ toast('Could not submit. Try again.', true); return; }
+    const ok = await safeSet(booksKey(state.code), JSON.stringify(books));
+    if(!ok){ toast('Could not submit. Try again.'); return; }
     state.books = books;
     goScreen('play');
     showPlaySub('wait');
@@ -510,7 +528,7 @@
     if(state.books.length !== n) return;
     const allDone = state.books.every(b => b.entries.length > state.room.currentRound);
     if(!allDone) return;
-    const raw = await safeGet(roomKey(state.code), true);
+    const raw = await safeGet(roomKey(state.code));
     let room = raw ? JSON.parse(raw) : state.room;
     if(room.status !== 'playing' || room.currentRound !== state.room.currentRound){
       state.room = room;
@@ -522,13 +540,13 @@
     } else {
       room = Object.assign({}, room, { currentRound: room.currentRound + 1 });
     }
-    await safeSet(roomKey(state.code), JSON.stringify(room), true);
+    await safeSet(roomKey(state.code), JSON.stringify(room));
     state.room = room;
     syncScreenWithRoom();
   }
 
   async function skipStragglers(){
-    const raw = await safeGet(booksKey(state.code), true);
+    const raw = await safeGet(booksKey(state.code));
     let books = raw ? JSON.parse(raw) : state.books;
     const roundIdx = state.room.currentRound;
     const placeholderType = roundIdx % 2 === 0 ? 'text' : 'drawing';
@@ -537,7 +555,7 @@
         b.entries.push({ authorId:'ghost', authorName:'The Void', type: placeholderType, content:'__GHOST__' });
       }
     });
-    await safeSet(booksKey(state.code), JSON.stringify(books), true);
+    await safeSet(booksKey(state.code), JSON.stringify(books));
     state.books = books;
     await checkAdvance();
   }
@@ -545,8 +563,8 @@
   async function restartGame(){
     if(!state.room || state.me.id !== state.room.hostId) return;
     const room = Object.assign({}, state.room, { status:'lobby', currentRound:0, totalRounds:0 });
-    await safeSet(booksKey(state.code), JSON.stringify([]), true);
-    await safeSet(roomKey(state.code), JSON.stringify(room), true);
+    await safeSet(booksKey(state.code), JSON.stringify([]));
+    await safeSet(roomKey(state.code), JSON.stringify(room));
     state.room = room; state.books = [];
     syncScreenWithRoom();
   }
@@ -562,9 +580,9 @@
   }
   async function pollTick(){
     if(!state.code) return;
-    const raw = await safeGet(roomKey(state.code), true);
+    const raw = await safeGet(roomKey(state.code));
     if(!raw){
-      toast('This room disappeared.', true);
+      toast('This room disappeared.');
       stopPolling();
       state.code = null; state.room = null;
       goScreen('home');
@@ -573,7 +591,7 @@
     let room;
     try{ room = JSON.parse(raw); }catch(e){ return; }
     state.room = room;
-    const rawBooks = await safeGet(booksKey(state.code), true);
+    const rawBooks = await safeGet(booksKey(state.code));
     try{ state.books = rawBooks ? JSON.parse(rawBooks) : []; }catch(e){ state.books = []; }
     syncScreenWithRoom();
     if(room.status === 'playing') await checkAdvance();
@@ -883,14 +901,14 @@
   document.addEventListener('DOMContentLoaded', ()=>{
     $('#create-room-btn').addEventListener('click', ()=>{
       const name = $('#name-input').value.trim();
-      if(!name){ toast('Enter a name first.', true); return; }
+      if(!name){ toast('Enter a name first.'); return; }
       createRoom(name);
     });
     $('#join-room-btn').addEventListener('click', ()=>{
       const name = $('#name-input').value.trim();
       const code = $('#join-code-input').value.trim();
-      if(!name){ toast('Enter a name first.', true); return; }
-      if(!code){ toast('Enter a room code.', true); return; }
+      if(!name){ toast('Enter a name first.'); return; }
+      if(!code){ toast('Enter a room code.'); return; }
       joinRoom(code, name);
     });
     $('#join-code-input').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') $('#join-room-btn').click(); });
@@ -899,7 +917,7 @@
       try{
         await navigator.clipboard.writeText(state.code || '');
         toast('Code copied!', false);
-      }catch(e){ toast('Could not copy. Code is ' + state.code, true); }
+      }catch(e){ toast('Could not copy. Code is ' + state.code); }
     });
     $('#start-game-btn').addEventListener('click', startGame);
 
@@ -909,7 +927,7 @@
     $('#play-text-input').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') $('#submit-text-btn').click(); });
     $('#submit-text-btn').addEventListener('click', ()=>{
       const val = $('#play-text-input').value.trim();
-      if(!val){ toast('Type something first.', true); return; }
+      if(!val){ toast('Type something first.'); return; }
       submitEntry(val, 'text');
     });
     $('#submit-draw-btn').addEventListener('click', ()=>{
