@@ -331,7 +331,8 @@
   <!-- REVEAL -->
   <section class="screen" id="screen-reveal">
     <h2 style="margin:0 0 4px;">How it all fell apart</h2>
-    <p class="tagline" style="margin-bottom:18px;">Pick a chain and watch it mutate.</p>
+    <p class="tagline" style="margin-bottom:14px;">Watch every chain unfold from start to finish, or pick one yourself.</p>
+    <button class="btn btn-accent" id="gallery-toggle-btn" style="margin-bottom:20px;">▶ Play gallery</button>
     <div class="reveal-tabs" id="reveal-tabs"></div>
     <div class="reveal-stage panel" id="reveal-stage-panel">
       <div class="reveal-caption" id="reveal-caption"></div>
@@ -375,6 +376,8 @@
     waitCaptionTimer: null,
     revealIndex: 0,
     revealStep: 0,
+    galleryPlaying: false,
+    galleryTimer: null,
     canvas: null, ctx: null, strokes: [], drawing:false,
     currentColor: PALETTE[0],
     currentSize: 8,
@@ -562,6 +565,7 @@
 
   async function restartGame(){
     if(!state.room || state.me.id !== state.room.hostId) return;
+    stopGallery();
     const room = Object.assign({}, state.room, { status:'lobby', currentRound:0, totalRounds:0 });
     await safeSet(booksKey(state.code), JSON.stringify([]));
     await safeSet(roomKey(state.code), JSON.stringify(room));
@@ -584,6 +588,7 @@
     if(!raw){
       toast('This room disappeared.');
       stopPolling();
+      stopGallery();
       state.code = null; state.room = null;
       goScreen('home');
       return;
@@ -605,6 +610,7 @@
     if(room.status === 'lobby') target = 'lobby';
     else if(room.status === 'playing') target = 'play';
     else if(room.status === 'reveal') target = 'reveal';
+    if(target !== 'reveal' && state.galleryPlaying) stopGallery();
     if(target !== state.screen) goScreen(target);
     if(target === 'lobby') renderLobby();
     else if(target === 'play') renderPlay();
@@ -729,6 +735,7 @@
         btn.className = 'reveal-tab' + (i === state.revealIndex ? ' active' : '');
         btn.textContent = 'Chain ' + (i + 1);
         btn.addEventListener('click', ()=>{
+          stopGallery();
           state.revealIndex = i;
           state.revealStep = 0;
           renderReveal();
@@ -740,6 +747,64 @@
     }
     renderRevealStage();
     $('#reveal-restart-btn').style.display = (state.me.id === state.room.hostId) ? 'inline-flex' : 'none';
+  }
+
+  function updateGalleryButton(){
+    const btn = $('#gallery-toggle-btn');
+    if(state.galleryPlaying){
+      btn.textContent = '⏸ Stop gallery';
+      btn.classList.remove('btn-accent');
+      btn.classList.add('btn-secondary');
+    } else {
+      btn.textContent = '▶ Play gallery';
+      btn.classList.add('btn-accent');
+      btn.classList.remove('btn-secondary');
+    }
+  }
+
+  function startGallery(){
+    if(!state.books.length) return;
+    state.galleryPlaying = true;
+    state.revealIndex = 0;
+    state.revealStep = 0;
+    updateGalleryButton();
+    renderReveal();
+    scheduleNextGalleryStep();
+  }
+
+  function stopGallery(){
+    state.galleryPlaying = false;
+    clearTimeout(state.galleryTimer);
+    state.galleryTimer = null;
+    updateGalleryButton();
+  }
+
+  function scheduleNextGalleryStep(){
+    clearTimeout(state.galleryTimer);
+    if(!state.galleryPlaying) return;
+    const book = state.books[state.revealIndex];
+    if(!book){ stopGallery(); return; }
+    const entry = book.entries[state.revealStep];
+    const delay = (entry && entry.type === 'drawing') ? 3800 : 2600;
+    state.galleryTimer = setTimeout(galleryAdvance, delay);
+  }
+
+  function galleryAdvance(){
+    if(!state.galleryPlaying) return;
+    const book = state.books[state.revealIndex];
+    if(!book){ stopGallery(); return; }
+    if(state.revealStep < book.entries.length - 1){
+      state.revealStep += 1;
+    } else if(state.revealIndex < state.books.length - 1){
+      state.revealIndex += 1;
+      state.revealStep = 0;
+    } else {
+      stopGallery();
+      renderReveal();
+      return;
+    }
+    renderReveal();
+    scheduleNextGalleryStep();
   }
 
   function renderRevealStage(){
@@ -937,13 +1002,18 @@
     $('#skip-stragglers-btn').addEventListener('click', skipStragglers);
 
     $('#reveal-prev').addEventListener('click', ()=>{
+      stopGallery();
       if(state.revealStep > 0){ state.revealStep -= 1; renderRevealStage(); }
     });
     $('#reveal-next').addEventListener('click', ()=>{
+      stopGallery();
       const book = state.books[state.revealIndex];
       if(book && state.revealStep < book.entries.length - 1){ state.revealStep += 1; renderRevealStage(); }
     });
     $('#reveal-restart-btn').addEventListener('click', restartGame);
+    $('#gallery-toggle-btn').addEventListener('click', ()=>{
+      if(state.galleryPlaying) stopGallery(); else startGallery();
+    });
 
     // kick off waiting captions cycle once (safe to call repeatedly, resets interval)
     cycleWaitCaption();
